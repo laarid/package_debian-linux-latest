@@ -1,0 +1,147 @@
+dist: trusty
+sudo: required
+services:
+- docker
+
+env:
+  global:
+  - DOCKER_EXEC_ROOT="sudo docker exec --interactive --tty --user root test_container"
+  - DOCKER_EXEC="sudo docker exec --interactive --tty test_container"
+  - DOCKER_EXEC_NOTTY="sudo docker exec test_container"
+  - BINTRAY_USER=laarid
+  - BINTRAY_REPO=main
+  - BINTRAY_COMPONENT=main
+  - BINTRAY_SUITE=stretch
+  - BINTRAY_DESC="Debian linux-latest repository for LAARiD"
+
+branches:
+  only:
+  - sid
+  - /^v\d+\.\d+/
+
+before_install:
+- sudo docker pull laarid/kernel-devel:sid-amd64
+- sudo docker images
+- |
+  sudo docker run --detach --interactive --tty \
+    --name test_container \
+    --volume ${TRAVIS_BUILD_DIR%${TRAVIS_REPO_SLUG}}:${TRAVIS_BUILD_DIR%${TRAVIS_REPO_SLUG}} \
+    --workdir ${TRAVIS_BUILD_DIR} \
+    --add-host dl.bintray.com:$(nslookup dl.bintray.com | grep -m1 -A1 Name: | grep Address: | awk '{print $2}') \
+    laarid/kernel-devel:sid-amd64 \
+    /bin/bash
+
+install:
+- ${DOCKER_EXEC_ROOT} apt-get update -qq
+- |
+  ${DOCKER_EXEC_ROOT} apt-get install -y --allow-unauthenticated \
+    linux-support-$(cat debian/rules.defs | grep KERNELVERSION | awk '{print $3}')
+
+script:
+- ${DOCKER_EXEC_NOTTY} fakeroot debian/rules debian/control || true
+- ${DOCKER_EXEC_NOTTY} fakeroot debian/rules binary-arch-all
+- ls -1 $(dirname "${TRAVIS_BUILD_DIR}")/*.deb | grep -v -- -android- | xargs rm -f
+- ls -al $(dirname "${TRAVIS_BUILD_DIR}")
+
+before_deploy:
+- |
+  for arch in $(ls -1 $(dirname "${TRAVIS_BUILD_DIR}")/*.deb | sed 's,^.*_\(\S\+\).deb,\1,' | sort -u); do \
+    cat .bintray.json.in | \
+      sed -e "s#@BINTRAY_PACKAGE@#$(cat debian/control | grep ^Source: | awk '{print $2}')#g" \
+          -e "s#@BINTRAY_USER@#${BINTRAY_USER}#g" \
+          -e "s#@BINTRAY_REPO@#${BINTRAY_REPO}#g" \
+          -e "s#@BINTRAY_DESC@#${BINTRAY_DESC}#g" \
+          -e "s#@GITHUB_REPO@#${TRAVIS_REPO_SLUG}#g" \
+          -e "s,@BINTRAY_VERSION@,${TRAVIS_TAG#v},g" \
+          -e "s#@BINTRAY_RELEASE_DATE@#$(cat debian/changelog | grep -m 1 '^ -- ' | sed 's,^.*  ,,')#g" \
+          -e "s#@BINTRAY_OUTDIR@#$(dirname ${TRAVIS_BUILD_DIR})#g" \
+          -e "s#@BINTRAY_POOLABBR@#$(cat debian/control | grep ^Source: | awk '{print $2}' | cut -c1)#g" \
+          -e "s#@BINTRAY_SUITE@#${BINTRAY_SUITE}#g" \
+          -e "s#@BINTRAY_COMPONENT@#${BINTRAY_COMPONENT}#g" \
+          -e "s#@BINTRAY_ARCH@#${arch}#g" | \
+      tee .bintray.json.${arch}; \
+  done
+
+deploy:
+- provider: bintray
+  file: .bintray.json.amd64
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.arm64
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.armel
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.armhf
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.i386
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.mips
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.mips64el
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.mipsel
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.powerpc
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.ppc64el
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+- provider: bintray
+  file: .bintray.json.s390x
+  user: vicamo
+  key:
+    secure: "cQeUOfmjaHwNWWmHgkQyMaHJbUWSfBe1c7xR/Ke7nyM9K0UaCVnlKHQZPo1VEWFErxqME/qDYUlG4LsJRJpXxPYyt9LlS/YDMfBs3gDTu+SBS1sXVPSMC7U5VJ1RQp9gIYFxzOSlTRhKyuQUgJmihlEr/tKuPIPRET/XFZZq66t/WakXhMpJjCqmVRlK4pgcxGPGxSl/JCGz/izepp0aeT911O2AKae6z6B2rv5RPS9b6a750BiYHMPoWTjuVgUi0/8JDHJV+8yop/jCfNn5zL3qY8QrnA6IG04NZD6kc82NcMteSkbHmaTqMe8s31SpfX7a+DyTF3XNIk/Kj2WCHeGO5D+4XX5azT9caB8T4+V4V4FFmCAxidosMPqCti7Uqd5lb8lUZ5BRA7MmI1vbDmXkfWBo57LXOqef9oeZKrBg1adxi/jwze3s7ohnU+UeVlKNu0ZdzvCbzyiS3sRcfmzIxGHoqBj7eSgt9gniXpcZvW0rjv2Vofk8rHCF+SbllSWdbOBNyKh/NW6GL8v2PJiRb/93zxPKVk/YAvH2nNBNp6qUyMiWrv2xzA+70/TiojeiKvFwDrXzQEokQ+uJBwENKMOq1toI8ONe7bag1RtTYEfv1LZ8rikLUFu2h1URVLi+FvP0vzMigYvOTAMY1K6CUQVIDWv/b/kiuGjMU9s="
+  on:
+    tags: true
+
+notifications:
+  slack:
+    rooms:
+    - secure: "GGDGmKtrpuNclYN4lXv73aVJlEDcdmiGXT2nIOtK9PTG3xgFZ+Yxn51Ol4r6PIxoUqXJT3bdWDiPVWJlxao028TTrc/uKY4SeT8c1X/5FMDyVgqpFcPDl9aNRJIuImeNQBBqSB1BJpgrTeMoDXMUVpjPtdAA2aehpW6ZL6UDP5lgY1+Be0YjnFpT3AyYEbzkY7xwu7sgZV2uSfF/+N7dbrW6ngVRxU+RXaNf44Gz13hZXXpzolZAG/lgKUn9hOM9OhM51tw+CQhrEkWHEDKxWho48d3OpxtuIs55iRoT7nkIfOvfdwc4xaWoZQza5oK8k6VxvwrX4Y79pryptGNR4q5xjPgUEYdSheaOnXfCaWsRQrizIi7K+MYAHs3WZ17SjrzqC6xq+JcK/FKFkPD6iMNUNwU8350ZYPG05LCTGnut+aLyLRDxqBTKiY/PwOn6Tdb2oqSQZ4o6nyxrvGuAmuQ6G0LjfgxQMYJnWi6X47QvPTOYYQUfneuxL/sSn6PKOLFv0waowANjGAc0/daQlI+cyv+4f+P6WQqYxTZGtSxrUT8bMGYDVk3EZoiqCQg+G8oENDZ+DBDf201DVQ6Xb58VY6Xg7q1XCTDdRSpnUMUQZFTYE/jJGEuWfFcW3utA8LGI8m75apxGnKeU0raTFP3Mz5sfK4Ofgr6mRmPuTNo="
