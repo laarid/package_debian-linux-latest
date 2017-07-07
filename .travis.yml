@@ -32,6 +32,7 @@ before_install:
     /bin/bash
 
 install:
+- ${DOCKER_EXEC_ROOT} chown -R laarid:laarid ${TRAVIS_BUILD_DIR%${TRAVIS_REPO_SLUG}}
 - ${DOCKER_EXEC_ROOT} apt-get update -qq
 - |
   ${DOCKER_EXEC_ROOT} apt-get install -y --allow-unauthenticated \
@@ -40,6 +41,7 @@ install:
 script:
 - ${DOCKER_EXEC_NOTTY} fakeroot debian/rules debian/control || true
 - ${DOCKER_EXEC_NOTTY} fakeroot debian/rules binary-arch-all
+- sudo chown -R $(id -u):$(id -g) ${TRAVIS_BUILD_DIR%${TRAVIS_REPO_SLUG}}
 - ls -1 $(dirname "${TRAVIS_BUILD_DIR}")/*.deb | grep -v -- -android- | xargs rm -f
 - ls -al $(dirname "${TRAVIS_BUILD_DIR}")
 
